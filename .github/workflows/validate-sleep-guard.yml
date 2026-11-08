@@ -27,7 +27,7 @@ jobs:
           cat /tmp/regression-before.log
           git restore Sources/NotchNotes/SystemSleepGuard.swift
           test "$result" -ne 0
-          grep -E 'signal code 5|Signal 5|_dispatch_assert_queue_fail|Unexpected signal code' /tmp/regression-before.log
+          grep -E '[Uu]nexpected signal code [45]|_dispatch_assert_queue_fail' /tmp/regression-before.log
       - name: Run all tests with the fix
         run: swift test
       - name: Build universal app
