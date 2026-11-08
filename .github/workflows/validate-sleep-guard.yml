@@ -1,0 +1,40 @@
+name: Validate sleep guard callback fix
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/sleep-guard-xpc-callback-isolation
+      - name: Select the upstream Swift 6.0 toolchain
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Verify the regression test crashes without the fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Sources/NotchNotes/SystemSleepGuard.swift')
+          p.write_text(p.read_text().replace('{ @Sendable [weak self] in', '{ [weak self] in').replace('{ @Sendable error in', '{ error in'))
+          PY
+          set +e
+          swift test --filter SystemSleepGuardTests/testConnectionHandlersCanRunOnBackgroundQueue > /tmp/regression-before.log 2>&1
+          result=$?
+          set -e
+          cat /tmp/regression-before.log
+          git restore Sources/NotchNotes/SystemSleepGuard.swift
+          test "$result" -ne 0
+          grep -E 'signal code 5|Signal 5|_dispatch_assert_queue_fail|Unexpected signal code' /tmp/regression-before.log
+      - name: Run all tests with the fix
+        run: swift test
+      - name: Build universal app
+        run: APP_VERSION=0.2.1 BUILD_NUMBER=39 ./Scripts/package-app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NotchNotes-callback-fix
+          path: |
+            dist.noindex/NotchNotes.zip
+            dist.noindex/NotchNotes.zip.sha256
