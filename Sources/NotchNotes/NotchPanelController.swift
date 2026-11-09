@@ -9,7 +9,24 @@ final class NotchPanel: NSPanel {
     var allowsKeyActivation = false
 
     override var canBecomeKey: Bool { allowsKeyActivation }
-    override var canBecomeMain: Bool { allowsKeyActivation }
+    override var canBecomeMain: Bool { false }
+
+    init() {
+        // Set nonactivatingPanel at creation, so AppKit can take keyboard focus
+        // without activating the app and switching away from a full-screen Space.
+        super.init(
+            contentRect: .zero,
+            styleMask: [.borderless, .fullSizeContentView, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, event.keyCode == 53 {
@@ -168,18 +185,8 @@ final class NotchPanelController: NSObject {
     private var settingsCancellables = Set<AnyCancellable>()
 
     override init() {
-        hotPanel = NotchPanel(
-            contentRect: .zero,
-            styleMask: [.borderless, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        drawerPanel = NotchPanel(
-            contentRect: .zero,
-            styleMask: [.borderless, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
+        hotPanel = NotchPanel()
+        drawerPanel = NotchPanel()
 
         super.init()
         configurePanel(hotPanel)
@@ -229,7 +236,6 @@ final class NotchPanelController: NSObject {
         drawerPanel.setFrame(drawerFrame(for: layout), display: true)
         if activate {
             drawerPanel.allowsKeyActivation = true
-            NSApp.activate(ignoringOtherApps: true)
             drawerPanel.makeKeyAndOrderFront(nil)
         } else {
             // Hover previews must remain passive. SwiftUI/AppKit descendants may
@@ -288,7 +294,6 @@ final class NotchPanelController: NSObject {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isMovable = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
@@ -383,6 +388,12 @@ final class NotchPanelController: NSObject {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(activeSpaceChanged),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
     }
 
     private func observePanelMouseEvents() {
@@ -408,7 +419,6 @@ final class NotchPanelController: NSObject {
             if event.type == .leftMouseDown {
                 self.beginFileDragTracking(at: self.screenLocation(for: event))
                 self.drawerPanel.allowsKeyActivation = true
-                NSApp.activate(ignoringOtherApps: true)
                 self.drawerPanel.makeKeyAndOrderFront(nil)
             } else if event.type == .leftMouseDragged {
                 self.noteFileDragMouseDragged(at: self.screenLocation(for: event))
@@ -536,6 +546,19 @@ final class NotchPanelController: NSObject {
         rebuildContent(layout: layout)
         hotPanel.setFrame(hotFrame(for: layout), display: true)
         drawerPanel.setFrame(drawerFrame(for: layout), display: true)
+    }
+
+    @objc private func activeSpaceChanged(_ notification: Notification) {
+        // A Space transition must not leave the invisible expanded drawer as
+        // the active target while the compact trigger remains ordered out.
+        cancelCollapse()
+        endFileDragTracking()
+        if isExpanded {
+            collapse(animated: false)
+        } else if settingsStore.triggerMode != .menuBar {
+            hotPanel.setFrame(hotFrame(for: currentLayout()), display: true)
+            hotPanel.orderFrontRegardless()
+        }
     }
 
     @objc private func mousePollingTick(_ timer: Timer) {
@@ -734,7 +757,6 @@ final class NotchPanelController: NSObject {
 
     private func activateEditor() {
         drawerPanel.allowsKeyActivation = true
-        NSApp.activate(ignoringOtherApps: true)
         drawerPanel.makeKeyAndOrderFront(nil)
         editorInteractionState.restoreSelection(
             store.selectionRange(for: store.activeTabID),
